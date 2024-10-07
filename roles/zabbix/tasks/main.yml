@@ -1,0 +1,149 @@
+### zabbix playbook ###
+
+- name: add zabbix repository
+  yum: name={{ item }} state=present
+  loop:
+    - "{{ Zabbix_VERSION }}"
+
+- name: Clean yum cache
+  command: yum clean all
+
+# yum install zabbix-server-mysql zabbix-agent
+- name: Zabbixservice install
+  yum: name={{ item }} state=present
+  loop:
+    - zabbix-server-mysql
+    - centos-release-scl
+    - zabbix-web
+
+# ディレクトリの存在確認をstatモジュールが実施し、結果をregisterモジュールに登録
+- name: Check if MySQL root password file exists
+  stat:
+    path: /root/.mysql_root_password_set
+  register: mysql_root_password_file
+
+# mysql create DB
+- name: Get root password
+  shell: >
+    grep "password" /var/log/mysqld.log | awk '{print $(NF)}'
+  register: root_password
+  when: not mysql_root_password_file.stat.exists
+
+# rootuserでログインして初回パスワードを変更
+- name: Set mysql_native_password for root user
+  command: |
+    mysql -u root -p'{{ root_password.stdout }}' \
+    --connect-expired-password \
+    --execute="ALTER USER 'root'@'localhost' IDENTIFIED WITH 'mysql_native_password' BY '{{ mysql_root_password }}';"
+  when: not mysql_root_password_file.stat.exists
+
+# MySQL rootパスワードが変更されていることを示すファイルを作成
+- name: Create a file to indicate that MySQL root password has been set
+  file:
+    path: /root/.mysql_root_password_set
+    state: touch
+  when: not mysql_root_password_file.stat.exists
+
+# zabbixDB作成
+- name: Create database for Zabbix
+  mysql_db:
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    name: "{{ db_name }}"
+    encoding: "{{ db_charset }}"
+    collation: "{{ db_collate }}"
+    state: present
+
+- name: Create mysql client user
+  command: >
+    mysql -u root -p'{{ mysql_root_password }}' \
+    --execute="CREATE USER IF NOT EXISTS '{{ item.user }}'@'{{ item.host }}' IDENTIFIED WITH 'mysql_native_password' BY '{{ item.password }}'; GRANT {{ item.privileges }} ON {{ item.db }}.* TO '{{ item.user }}'@'{{ item.host }}';"
+  with_items:
+    - { user: "zabbix", password: "{{ mysql_client_password }}", db: "{{ db_name }}", host: "localhost", privileges: "ALL PRIVILEGES" }
+
+
+- name: Check if the Zabbix SQL file exists
+  stat:
+    path: "{{ zabbix_sql_file }}"
+  register: zabbix_sql_file_stat
+
+- name: Check if Zabbix tables exist
+  command: "mysql -u zabbix -p{{ zabbix_db_password }} -e 'SHOW TABLES LIKE \"users\";' zabbix"
+  register: zabbix_tables
+  changed_when: false
+  ignore_errors: true
+
+- name: Import Zabbix database schema
+  shell: zcat /usr/share/doc/zabbix-server-mysql-5.0.42/create.sql.gz | mysql -u zabbix -p'{{ zabbix_db_password }}' zabbix
+  args:
+    warn: no
+  when: zabbix_tables.stdout == ''
+  notify:
+    - restart zabbix
+    - restart nginx
+    - restart mysqld
+
+- name: Check if the original file exists
+  stat:
+    path: /etc/nginx/conf.d/default.conf
+  register: original_file
+
+- name: Check if the new file already exists
+  stat:
+    path: /etc/nginx/conf.d/default.conf.bak
+  register: new_file
+
+- name: Rename the file
+  command: mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.bak
+  when:
+    - original_file.stat.exists
+    - not new_file.stat.exists
+
+- name: copy zabbix.conf
+  copy:
+    src: "roles/zabbix/files/{{ item.src }}"
+    dest: "/etc/nginx/conf.d/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: 644
+  loop:
+    - { src: zabbix.conf, dest: . }
+
+- name: Change ownership of /var/opt/rh/rh-php72/lib/php/session/
+  file:
+    path: /var/opt/rh/rh-php72/lib/php/session/
+    state: directory
+    recurse: yes
+    owner: nginx
+    group: nginx
+    mode: 770
+
+- name: Ensure DBHost is set to localhost
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^# DBHost=localhost'
+    line: 'DBHost=localhost'
+    state: present
+
+- name: Ensure DBPassword is set
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^# DBPassword='
+    line: 'DBPassword=P@ssw0rd2023roiwbu'
+    state: present
+  notify: restart zabbix
+
+- name: start zabbix
+  service: name=zabbix-server state=started enabled=yes
+
+- name: Change ownership of /etc/zabbix/web to nginx
+  file:
+    path: /etc/zabbix/web
+    state: directory
+    recurse: yes
+    owner: nginx
+    group: nginx
+
+
+
+
