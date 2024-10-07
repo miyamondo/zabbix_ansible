@@ -1,0 +1,39 @@
+### grafana ###
+
+- name: Download Grafana RPM
+  get_url:
+    url: "{{ Grafana_VERSION }}"
+    dest: /tmp/grafana-4.6.3-1.x86_64.rpm
+
+- name: Install dependencies for Grafana
+  yum:
+    name: fontconfig
+    state: present
+
+- name: Install Grafana
+  yum:
+    name: /tmp/grafana-4.6.3-1.x86_64.rpm
+    state: present
+
+
+- name: Reload systemd daemon
+  command: /bin/systemctl daemon-reload
+
+- name: start grafana
+  service: name=grafana-server state=started enabled=yes
+
+- name: Install Grafana Zabbix plugin using grafana-cli
+  command: grafana-cli plugins install alexanderzobnin-zabbix-app 3.8.1
+
+- name: Grafana.ini replace
+  copy:
+    src: 
+    dest:
+    backup: no
+    owner: root
+    group: grafana
+  with_items:
+    - { src: roles/grafana/files/grafana.ini, dest: ./etc/grafana/ }
+  notify:
+    restart grafana
+    restart nginx

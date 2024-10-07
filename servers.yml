@@ -1,0 +1,20 @@
+- hosts: all
+  roles:
+    - common
+
+- hosts: webservers
+  roles:
+    - php
+    - nginx_wordpress
+    - mysql
+    - wordpress
+    - zabbixagent
+
+- hosts: zabbixs
+  roles:
+    - php
+    - nginx_zabbix
+    - mysql
+    - zabbix
+    - zabbixagent
+    - grafana

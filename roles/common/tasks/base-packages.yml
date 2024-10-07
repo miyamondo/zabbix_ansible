@@ -1,0 +1,22 @@
+- name: yum install bacepackage
+  yum: name={{ item }} state=present
+  loop:
+    - vim
+    - zsh
+    - git
+    - tree
+    - mlocate
+    - telnet
+    - wget
+    - ipa-pgothic-fonts
+    - MySQL-python
+
+- name: stop firewalld
+  service: name=firewalld enabled=no state=stopped
+
+- name: Disable SELinux
+  selinux: state=disabled
+
+- name: Reboot
+  ansible.builtin.reboot: reboot_timeout=600
+  become: true

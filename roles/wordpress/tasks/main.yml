@@ -1,0 +1,95 @@
+- name: Create directory for WordPress
+  file:
+    path: "/var/www/dev.menta.me"
+    state: directory
+
+- name: Download WordPress archive
+  get_url:
+    url: "{{ item }}"
+    dest: "/var/www/dev.menta.me/"
+  loop:
+    - "{{ Wordpress_VERSION }}"
+
+- name: Extract WordPress archive
+  ansible.builtin.unarchive:
+    src: "/var/www/dev.menta.me/wordpress-6.4.3-ja.tar.gz"
+    dest: "/var/www/dev.menta.me"
+    remote_src: yes
+    extra_opts: --strip-components=1
+  notify: restart nginx
+
+- name: wordpress chown nginx
+  file: path=/var/www/dev.menta.me/ owner=nginx group=nginx recurse=yes
+  notify: restart nginx
+
+# ディレクトリの存在確認をstatモジュールが実施し、結果をregisterモジュールに登録
+- name: Check if MySQL root password file exists
+  stat:
+    path: /root/.mysql_root_password_set
+  register: mysql_root_password_file
+
+# mysql create DB
+- name: Mysql Wordpress Get root password
+  shell: >
+    grep "password" /var/log/mysqld.log | awk '{print $(NF)}'
+  register: root_password
+  when: not mysql_root_password_file.stat.exists
+
+# rootuserでログインして初回パスワードを変更
+#- name: Set mysql_native_password for root user
+#  command: |
+#    mysql -u root -p'{{ root_password.stdout }}' \
+#    --connect-expired-password \
+#    --execute="ALTER USER 'root'@'localhost' IDENTIFIED WITH 'mysql_native_password' BY '{{ mysql_root_password }}';"
+#  when: not mysql_root_password_file.stat.exists
+
+- name: Set mysql_native_password for root user
+  command: >
+    mysql -u root -p'{{ mysql_root_password }}' \
+    --execute="ALTER USER 'root'@'localhost' IDENTIFIED WITH 'mysql_native_password' BY '{{ mysql_root_password }}';"
+  when: not mysql_root_password_file.stat.exists
+
+# MySQL rootパスワードが変更されていることを示すファイルを作成
+- name: Create a file to indicate that MySQL root password has been set
+  file:
+    path: /root/.mysql_root_password_set
+    state: touch
+  when: not mysql_root_password_file.stat.exists
+
+
+- name: Create database for Wordpress
+  mysql_db:
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    name: "{{ db_name }}"
+    encoding: "{{ db_charset }}"
+    collation: "{{ db_collate }}"
+    state: present
+
+- name: Create mysql client user
+  command: >
+    mysql -u root -p'{{ mysql_root_password }}' \
+    --execute="CREATE USER IF NOT EXISTS '{{ item.user }}'@'{{ item.host }}' IDENTIFIED WITH 'mysql_native_password' BY '{{ item.password }}'; GRANT {{ item.privileges }} ON {{ item.db }}.* TO '{{ item.user }}'@'{{ item.host }}';"
+  with_items:
+    - { user: "wordpress", password: "{{ mysql_client_password }}", db: "{{ wordpress_db_name }}", host: "localhost", privileges: "ALL PRIVILEGES" }
+
+- name: Create Wordpress user if not exists
+  mysql_user:
+    name: wordpress
+    host: localhost
+    password: "{{ mysql_client_password }}"
+    priv: '*.*:USAGE'
+    state: present
+    check_implicit_admin: yes
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Grant all privileges on Wordpress database to wordpress user
+  mysql_user:
+    name: wordpress
+    host: localhost
+    priv: 'wordpress.*:ALL'
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+

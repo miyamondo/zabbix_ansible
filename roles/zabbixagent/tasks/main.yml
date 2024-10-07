@@ -1,0 +1,29 @@
+###nginx task main.yml###
+- name: add zabbix-agent repository
+  yum: name={{ item }} state=present
+  loop:
+    - "{{ Zabbix_VERSION }}"
+  
+- name: Clean yum cache
+  command: yum clean all
+
+- name: install zabbix agent
+  yum: name=zabbix-agent state=present
+  notify: restart zabbix-agent
+
+- name: start zabbix agent
+  service: name=zabbix-agent state=started enabled=yes
+
+- name: copy zabbix-agent config
+  copy:
+    src: "roles/zabbixagent/files/{{ item.src }}"
+    dest: "/etc/zabbix/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: 644
+  loop:
+    - { src: zabbix_agentd.conf, dest: . }
+  notify: restart zabbix-agent
+
+
+
