@@ -1,5 +1,8 @@
 # My Project zabbix_ansible
 
+![image](https://github.com/user-attachments/assets/a1c5c7cf-e2c3-493c-9f66-94fa711e6080)
+
+
 # issue
 ansibleでzabbix構築を自動化し、grafana連携で可視化性を上げる
 
